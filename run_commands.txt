@@ -1,0 +1,2 @@
+1) sh run-command-cdf.sh udacity-project2-network network-iac-params.json network-iac-clf.yml
+2) sh run-command-cdf.sh udacity-project2-servers servers-iac-params.json servers-iac-clf.yml

@@ -1,0 +1,10 @@
+[
+    {
+        "ParameterKey": "Environment",
+        "ParameterValue": "UdacityProject2"
+    },
+    {
+        "ParameterKey": "HomeIp",
+        "ParameterValue": "72.82.233.157/32"
+    }
+]

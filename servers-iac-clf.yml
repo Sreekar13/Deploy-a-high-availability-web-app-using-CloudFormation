@@ -1,0 +1,222 @@
+Description: This script is to launch servers
+
+Parameters:
+  Environment:
+    Description: This is the environment variable to create a key pair and use it for importing values
+    Type: String
+  HomeIp: 
+    Description: This is the parameter to store the home ip address to allow bastion server access
+    Type: String
+  
+Resources:
+  BastionServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: This security group is for the load balancer
+      SecurityGroupEgress: 
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref HomeIp
+      Tags: 
+        - Key: Name
+          Value: !Sub ${Environment}-BastionServerSG
+      VpcId: 
+        Fn::ImportValue: !Sub ${Environment}-VPCID
+
+
+  BastionServer:
+    Type: AWS::EC2::Instance
+    Properties: 
+      AvailabilityZone: !Select [0, !GetAZs '']
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 10
+      IamInstanceProfile: !Ref InstanceProfileS3Access
+      ImageId: ami-0ac73f33a1888c64a
+      InstanceType: t2.micro
+      KeyName: OregonEC2
+      SecurityGroupIds: 
+        - !Ref BastionServerSecurityGroup
+      SubnetId: 
+        Fn::ImportValue: !Sub ${Environment}-PubSub1
+      Tags: 
+        - Key: Name
+          Value: !Sub ${Environment}-BastionServer
+
+  RoleToAccessS3:
+    Type: AWS::IAM::Role
+    Properties: 
+      Path: /
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - ec2.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  InstanceProfileS3Access:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Roles: 
+        - !Ref RoleToAccessS3
+      Path: /
+
+  WebServerSecurityGroup: 
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: BastionServerSecurityGroup
+    Properties: 
+      GroupDescription: Security group for the ec2 instances that will span in multiple subnets 
+      GroupName: Test123EC2
+      SecurityGroupEgress: 
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref LBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref BastionServerSecurityGroup          
+      Tags: 
+        - Key: Name
+          Value: !Sub ${Environment}-WASG
+      VpcId: 
+        Fn::ImportValue: !Sub ${Environment}-VPCID
+
+  WebAppLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      AssociatePublicIpAddress: false
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 10
+      IamInstanceProfile: !Ref InstanceProfileS3Access
+      ImageId: ami-0ac73f33a1888c64a
+      InstanceType: t3.small
+      LaunchConfigurationName: WebAppLC
+      SecurityGroups: 
+        - !Ref WebServerSecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install unzip awscli -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          cd /var/www/html
+          aws s3 cp s3://udacity-demo-1/udacity.zip .
+          unzip -o udacity.zip 
+
+  AutoScaling:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub ${Environment}-PrivSubs
+      LaunchConfigurationName: !Ref WebAppLaunchConfiguration
+      MinSize: '2'
+      MaxSize: '4'
+      TargetGroupARNs: 
+        - !Ref WebAppTargetGroup
+      
+
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckPort: 80
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      Name: WebAppTargetGroup
+      Port: 80
+      Protocol: HTTP
+      Tags: 
+        - Key: Name
+          Value: !Sub ${Environment}-TargetGroup
+      UnhealthyThresholdCount: 5
+      VpcId: 
+        Fn::ImportValue: !Sub ${Environment}-VPCID
+
+#The below part is for the load balancer
+  LBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: This security group is for the load balancer
+      SecurityGroupEgress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.0.0.0/16
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags: 
+        - Key: Name
+          Value: !Sub ${Environment}-LBSecGroup
+      VpcId: 
+        Fn::ImportValue: !Sub ${Environment}-VPCID
+
+
+  LBWebApp:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      IpAddressType: ipv4
+      SecurityGroups: 
+        - !Ref LBSecurityGroup
+      Subnets: 
+        - Fn::ImportValue: !Sub ${Environment}-PubSub1
+        - Fn::ImportValue: !Sub ${Environment}-PubSub2
+      Tags: 
+        - Key: Name
+          Value: !Sub ${Environment}-LoadBalancerWebApp
+
+  LBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      DefaultActions: 
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup
+      LoadBalancerArn: !Ref LBWebApp
+      Port: 80
+      Protocol: HTTP
+
+  LBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties: 
+      Actions: 
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup
+      Conditions: 
+        - Field: path-pattern
+          Values: [/] 
+      ListenerArn: !Ref LBListener
+      Priority: 1
+
+Outputs:
+  LoadBalancerDNS:
+    Description: This will give the load balancer url
+    Value:
+      Fn::Sub: ['http://${URL}',{'URL': !GetAtt LBWebApp.DNSName}]
+    Export:
+      Name: LoadBalancerURL
