@@ -64,8 +64,7 @@ If you want to go the extra mile, set up a bastion host to allow you to SSH into
 Last thing: Remember to delete your CloudFormation stack when you're done to avoid recurring charges!
 
 # Developed Architecture
-![Image of project#2]
-(https://github.com/Sreekar13/Deploy-a-high-availability-web-app-using-CloudFormation/blob/main/project%232.png?raw=true)
+![project#2](https://user-images.githubusercontent.com/60206516/106361370-96b1bf80-62eb-11eb-851e-b4deb44324c6.png)
 
 # Files
 
